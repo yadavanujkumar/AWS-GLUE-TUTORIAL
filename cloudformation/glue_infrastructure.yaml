@@ -1,0 +1,125 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  AWS Glue Tutorial — CloudFormation stack that provisions the Glue Data Catalog
+  database, an S3 crawler, and two ETL jobs.
+
+# ---------------------------------------------------------------------------
+# Parameters
+# ---------------------------------------------------------------------------
+Parameters:
+  BucketName:
+    Type: String
+    Description: Name of the S3 bucket that holds raw data, scripts, and output.
+
+  GlueRoleArn:
+    Type: String
+    Description: >
+      ARN of the IAM role that Glue assumes when running crawlers and jobs.
+      The role must have AWSGlueServiceRole and S3 access policies attached.
+
+# ---------------------------------------------------------------------------
+# Resources
+# ---------------------------------------------------------------------------
+Resources:
+
+  # -------------------------------------------------------------------------
+  # Glue Data Catalog Database
+  # -------------------------------------------------------------------------
+  GlueTutorialDatabase:
+    Type: AWS::Glue::Database
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseInput:
+        Name: glue_tutorial_db
+        Description: AWS Glue Tutorial — central Data Catalog database
+
+  # -------------------------------------------------------------------------
+  # Crawler — discovers schemas for the raw customers and orders CSV files
+  # -------------------------------------------------------------------------
+  GlueTutorialCrawler:
+    Type: AWS::Glue::Crawler
+    Properties:
+      Name: glue-tutorial-crawler
+      Role: !Ref GlueRoleArn
+      DatabaseName: !Ref GlueTutorialDatabase
+      Targets:
+        S3Targets:
+          - Path: !Sub "s3://${BucketName}/raw/customers/"
+          - Path: !Sub "s3://${BucketName}/raw/orders/"
+      TablePrefix: "raw_"
+      SchemaChangePolicy:
+        UpdateBehavior: UPDATE_IN_DATABASE
+        DeleteBehavior: LOG
+      RecrawlPolicy:
+        RecrawlBehavior: CRAWL_EVERYTHING
+      Description: Crawls raw CSV files and populates the Glue Data Catalog
+
+  # -------------------------------------------------------------------------
+  # ETL Job 1 — Basic S3-to-S3 transformation
+  # -------------------------------------------------------------------------
+  BasicETLJob:
+    Type: AWS::Glue::Job
+    Properties:
+      Name: glue-tutorial-basic-etl
+      Role: !Ref GlueRoleArn
+      GlueVersion: "4.0"
+      NumberOfWorkers: 2
+      WorkerType: G.1X
+      Command:
+        Name: glueetl
+        ScriptLocation: !Sub "s3://${BucketName}/scripts/01_basic_etl.py"
+        PythonVersion: "3"
+      DefaultArguments:
+        "--job-language": python
+        "--job-bookmark-option": "job-bookmark-enable"
+        "--TempDir": !Sub "s3://${BucketName}/tmp/"
+        "--input_path": !Sub "s3://${BucketName}/raw/customers/"
+        "--output_path": !Sub "s3://${BucketName}/processed/customers/"
+        "--enable-metrics": ""
+        "--enable-continuous-cloudwatch-log": "true"
+      Description: Reads raw customers CSV, cleans it, and writes Parquet to S3
+
+  # -------------------------------------------------------------------------
+  # ETL Job 2 — Advanced transformations (join + aggregate + partition)
+  # -------------------------------------------------------------------------
+  AdvancedTransformationsJob:
+    Type: AWS::Glue::Job
+    Properties:
+      Name: glue-tutorial-advanced
+      Role: !Ref GlueRoleArn
+      GlueVersion: "4.0"
+      NumberOfWorkers: 2
+      WorkerType: G.1X
+      Command:
+        Name: glueetl
+        ScriptLocation: !Sub "s3://${BucketName}/scripts/02_advanced_transformations.py"
+        PythonVersion: "3"
+      DefaultArguments:
+        "--job-language": python
+        "--TempDir": !Sub "s3://${BucketName}/tmp/"
+        "--customers_path": !Sub "s3://${BucketName}/raw/customers/"
+        "--orders_path": !Sub "s3://${BucketName}/raw/orders/"
+        "--output_path": !Sub "s3://${BucketName}/processed/customer_orders/"
+        "--enable-metrics": ""
+        "--enable-continuous-cloudwatch-log": "true"
+      Description: Joins customers with orders, aggregates spend, writes Parquet partitioned by country
+
+# ---------------------------------------------------------------------------
+# Outputs
+# ---------------------------------------------------------------------------
+Outputs:
+  DatabaseName:
+    Description: Glue Data Catalog database name
+    Value: !Ref GlueTutorialDatabase
+
+  CrawlerName:
+    Description: Name of the Glue crawler
+    Value: !Ref GlueTutorialCrawler
+
+  BasicETLJobName:
+    Description: Name of the basic ETL Glue job
+    Value: !Ref BasicETLJob
+
+  AdvancedJobName:
+    Description: Name of the advanced transformations Glue job
+    Value: !Ref AdvancedTransformationsJob
